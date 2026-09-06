@@ -39,7 +39,7 @@ These were resolved while turning the spec into this plan, confirmed live agains
 - Team page: `./team-stats/<team_id>/split-<Split>/tournament-<name>/`. Anubis Gaming = team_id `2833`.
 - Team match list: `https://gol.gg/teams/team-matchlist/<team_id>/split-<Split>/tournament-<name>/`, links to games at `../game/stats/<game_id>/page-game/`.
 - Team 2833's S16 Summer match list includes (at minimum) game IDs: 80757, 80756, 80755, 80747, 80746, 80380, 80379, 80039, 80038, 79884, 79883, 79872, 79871.
-- Game 80757 (ANB vs Disruptors): duration "Game Time 21:45" (= 1305 seconds), patch "v16.15", date "2026-08-05". ANB won. ANB bans: Nocturne, Jayce, Anivia. Disruptors bans: Cassiopeia, Camille, Syndra. ANB picks (pick order): Ryze, Rumble, Xin Zhao, Sivir, Lulu. Disruptors picks: Aatrox, Viktor, Rell, K'Sante, Ahri. Box score:
+- Game 80757 (ANB vs Disruptors): duration "Game Time 21:45" (= 1305 seconds), patch "v16.15", date "2026-08-05". ANB won. Bans are 5 per team across two phases separated by a literal "|" divider in the real markup: ANB bans: Nocturne, Jayce, Anivia, Jhin, Gnar. Disruptors bans: Cassiopeia, Camille, Syndra, Alistar, Nautilus. (An earlier pass at this document, based on a summarized page fetch rather than raw HTML, listed only the first 3 bans per team; corrected here after Task 6 found the second phase during implementation.) ANB picks (pick order): Ryze, Rumble, Xin Zhao, Sivir, Lulu. Disruptors picks: Aatrox, Viktor, Rell, K'Sante, Ahri. Box score:
   - ANB: Giyuu/Ryze/5-1-13/222cs, Maged/Rumble/4-1-10/190cs, Theocacs/Xin Zhao/7-0-14/185cs, Shy Carry/Sivir/12-0-12/216cs, B Butcher/Lulu/0-2-22/26cs
   - Disruptors: owlonsky/Aatrox/0-5-1/155cs, Skream/Viktor/1-4-0/172cs, sas/Rell/1-8-2/24cs, Chakroun/K'Sante/1-5-0/161cs, Random/Ahri/1-6-3/171cs
 
@@ -612,8 +612,8 @@ def test_parse_game_draft_matches_confirmed_values():
     assert winner_name == "ANB"
     winner_bans = draft["team_1_bans"] if draft["winner"] == "team_1" else draft["team_2_bans"]
     loser_bans = draft["team_2_bans"] if draft["winner"] == "team_1" else draft["team_1_bans"]
-    assert set(winner_bans) == {"Nocturne", "Jayce", "Anivia"}
-    assert set(loser_bans) == {"Cassiopeia", "Camille", "Syndra"}
+    assert set(winner_bans) == {"Nocturne", "Jayce", "Anivia", "Jhin", "Gnar"}
+    assert set(loser_bans) == {"Cassiopeia", "Camille", "Syndra", "Alistar", "Nautilus"}
     winner_picks = draft["team_1_picks"] if draft["winner"] == "team_1" else draft["team_2_picks"]
     assert winner_picks == ["Ryze", "Rumble", "Xin Zhao", "Sivir", "Lulu"]
     # Side is genuinely unconfirmed for this fixture (nobody has checked which
