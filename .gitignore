@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment / secrets
+.env
+
+# Raw scraped data cache (large, regenerable from lol_scrape.ipynb)
+data_cache/
+*.zip
+
+# OS
+.DS_Store
+Thumbs.db
