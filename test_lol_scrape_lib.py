@@ -67,3 +67,54 @@ def test_fetch_html_raises_after_max_retries():
         with pytest.raises(RuntimeError):
             lol_scrape_lib.fetch_html("https://gol.gg/x", session, delay=0, max_retries=2)
     assert session.get.call_count == 2
+
+
+def test_parse_list_table_teams_fixture_has_expected_columns():
+    html = (FIXTURES / "teams_list.html").read_text(encoding="utf-8")
+    df = lol_scrape_lib.parse_list_table(html)
+    for col in ["Name", "Region", "Games", "Win rate", "K:D", "GPM"]:
+        assert col in df.columns
+    assert len(df) > 0
+
+
+def test_filter_to_target_regions_keeps_only_target_rows():
+    html = (FIXTURES / "teams_list.html").read_text(encoding="utf-8")
+    df = lol_scrape_lib.parse_list_table(html)
+    filtered = lol_scrape_lib.filter_to_target_regions(df, ["LCK", "LPL", "LEC", "LCS"])
+    assert len(filtered) > 0
+    assert set(filtered["Region"].unique()) <= set(lol_scrape_lib.GOLGG_REGION_CODES.values())
+
+
+def test_players_list_fixture_has_no_region_column():
+    html = (FIXTURES / "players_list.html").read_text(encoding="utf-8")
+    df = lol_scrape_lib.parse_list_table(html)
+    assert "Region" not in df.columns
+
+
+def test_champion_list_fixture_has_no_region_column():
+    html = (FIXTURES / "champion_list.html").read_text(encoding="utf-8")
+    df = lol_scrape_lib.parse_list_table(html)
+    assert "Region" not in df.columns
+
+
+def test_hash_table_is_stable_across_row_order():
+    df1 = pd.DataFrame({"a": [1, 2], "b": ["x", "y"]})
+    df2 = pd.DataFrame({"a": [2, 1], "b": ["y", "x"]})
+    assert lol_scrape_lib.hash_table(df1) == lol_scrape_lib.hash_table(df2)
+
+
+def test_hash_table_changes_when_content_changes():
+    df1 = pd.DataFrame({"a": [1, 2], "b": ["x", "y"]})
+    df2 = pd.DataFrame({"a": [1, 2], "b": ["x", "z"]})
+    assert lol_scrape_lib.hash_table(df1) != lol_scrape_lib.hash_table(df2)
+
+
+def test_filter_to_target_regions_includes_lcs_na_teams():
+    """Verify LCS/NA teams survive the filter (critical: NA must use keep_default_na=False)."""
+    html = (FIXTURES / "teams_list.html").read_text(encoding="utf-8")
+    df = lol_scrape_lib.parse_list_table(html)
+    filtered = lol_scrape_lib.filter_to_target_regions(df, ["LCK", "LPL", "LEC", "LCS"])
+    team_names = filtered["Name"].str.lower()
+    assert (team_names.str.contains("cloud9", na=False).any() or
+            team_names.str.contains("team liquid", na=False).any())
+
