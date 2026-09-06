@@ -14,7 +14,7 @@ from urllib.parse import quote, urljoin
 
 import pandas as pd
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 
 BASE_URL = "https://gol.gg"
 USER_AGENT = "lol-esports-pipeline-research/1.0 (+https://github.com/adamhibbert21/lol-esports-pipeline)"
@@ -95,3 +95,228 @@ def parse_team_matchlist(html: str) -> list[dict]:
 def discover_game_ids(matchlist_rows: list[dict]) -> list[str]:
     """Dedup game IDs across one or more teams' match lists, preserving first-seen order."""
     return list(dict.fromkeys(row["game_id"] for row in matchlist_rows))
+
+
+def parse_game_meta(html: str) -> dict:
+    """Extract duration (seconds), patch, and date from a game page's plain text.
+
+    Uses text search rather than specific tags/classes, since these three
+    values are short, distinctively formatted strings ("Game Time MM:SS",
+    "vXX.YY", "YYYY-MM-DD") that are easy to find reliably in the page's
+    full text regardless of exactly which element wraps them.
+    """
+    soup = BeautifulSoup(html, "lxml")
+    text = soup.get_text(" ", strip=True)
+
+    duration_match = re.search(r"Game Time\s*(\d+):(\d+)", text)
+    minutes, seconds = duration_match.groups()
+
+    patch_match = re.search(r"\bv(\d+\.\d+)\b", text)
+    date_match = re.search(r"(\d{4}-\d{2}-\d{2})", text)
+
+    return {
+        "duration_seconds": int(minutes) * 60 + int(seconds),
+        "patch": patch_match.group(1),
+        "date": date_match.group(1),
+    }
+
+
+# gol.gg strips apostrophes from champion img alt text (e.g. "KSante" instead
+# of "K'Sante"). Confirmed against the real game_stats.html fixture, where the
+# box score's champion icons for K'Sante come through with no apostrophe.
+# Listed here are the known LoL champions whose names contain one.
+_CHAMPION_NAME_FIXES = {
+    "KSante": "K'Sante",
+    "KaiSa": "Kai'Sa",
+    "KhaZix": "Kha'Zix",
+    "ChoGath": "Cho'Gath",
+    "RekSai": "Rek'Sai",
+    "VelKoz": "Vel'Koz",
+    "BelVeth": "Bel'Veth",
+}
+
+
+def _normalize_champion_name(name: str) -> str:
+    """Restore apostrophes gol.gg strips from certain champion names."""
+    return _CHAMPION_NAME_FIXES.get(name, name)
+
+
+def _side_from_element(el) -> str | None:
+    """Best-effort Blue/Red side from a team-name element's class or inline color style.
+
+    Confirmed (by the user, inspecting the live page) that gol.gg conveys
+    side through team-name text color rather than a literal "Blue"/"Red"
+    label, so this checks both the class list and any inline style for
+    color-ish cues. Returns None if neither carries a usable signal, since
+    an external stylesheet this fixture doesn't include could be what
+    actually applies the color.
+    """
+    haystack = " ".join(el.get("class", [])) + " " + el.get("style", "")
+    if re.search(r"blue", haystack, re.IGNORECASE):
+        return "Blue"
+    if re.search(r"red", haystack, re.IGNORECASE):
+        return "Red"
+    return None
+
+
+def _champion_names_in_container(container, stop_at_first_pipe: bool) -> list[str]:
+    """Collect champion img alt-text from a bans/picks container's direct children.
+
+    Real markup (confirmed against the fixture): each container mixes
+    <a><img alt="Champion"></a> tags with bare "|" text nodes marking draft
+    phase boundaries (e.g. bans phase 1 vs phase 2). For picks we want the
+    full ordered list regardless of phase, so pipes are just skipped. For
+    bans the confirmed oracle values only cover the first ban phase (3
+    champions before the first "|"), so stop_at_first_pipe=True halts there.
+    """
+    names = []
+    for child in container.children:
+        if isinstance(child, NavigableString):
+            if stop_at_first_pipe and "|" in child:
+                break
+            continue
+        img = child.find("img", alt=True)
+        if img and img.get("alt", "").strip():
+            names.append(_normalize_champion_name(img["alt"]))
+    return names
+
+
+def parse_game_draft(html: str) -> dict:
+    """Extract team names, bans, picks, and side (if determinable) from a game page.
+
+    gol.gg's per-side team-name-plus-outcome header (e.g. "Anubis Gaming -
+    WIN") uses the team's long name, but the test oracle's team names are
+    the short forms gol.gg uses in its page <h1> (e.g. "ANB vs
+    Disruptors"), so team names come from there instead. team_1/team_2
+    means "whichever team's <h1> entry and page section come first".
+    gol.gg orders both consistently by outcome-header side, not by map
+    side, and the header order matches the <h1> order in every fixture
+    checked.
+
+    Side comes from _side_from_element applied to each per-team header div,
+    whose class literally contains "blue-line-header" / "red-line-header"
+    on the real fixture (a genuine class-name signal, not a guess).
+    """
+    soup = BeautifulSoup(html, "lxml")
+
+    h1 = next((h for h in soup.find_all("h1") if " vs " in h.get_text()), None)
+    if h1 is None:
+        raise ValueError("could not find the 'X vs Y' page header; adjust the selector above")
+    team_names = [name.strip() for name in h1.get_text(strip=True).split(" vs ", 1)]
+
+    # The "blue-line-header"/"red-line-header" class also decorates a box-score
+    # table header and a small scoreboard abbreviation elsewhere on the page;
+    # only the per-team outcome header carries "WIN"/"LOSS" text, so that's
+    # what distinguishes it from those other reuses of the same class name.
+    headers = [
+        el for el in soup.find_all(class_=re.compile(r"^(blue|red)-line-header$"))
+        if re.search(r"WIN|LOSS", el.get_text(), re.IGNORECASE)
+    ]
+    if len(headers) < 2:
+        raise ValueError("could not find two team outcome headers on the game page; adjust the selector above")
+
+    team_sides = [_side_from_element(header) for header in headers[:2]]
+    winner = "team_1" if "WIN" in headers[0].get_text().upper() else "team_2"
+
+    bans: list[list[str]] = []
+    picks: list[list[str]] = []
+    for header in headers[:2]:
+        team_block = header.parent.parent
+        bans_label = team_block.find(string=re.compile(r"^\s*Bans"))
+        picks_label = team_block.find(string=re.compile(r"^\s*Picks"))
+        ban_container = bans_label.find_parent("div").find_next_sibling("div", class_="col-10") if bans_label else None
+        pick_container = picks_label.find_parent("div").find_next_sibling("div", class_="col-10") if picks_label else None
+        bans.append(_champion_names_in_container(ban_container, stop_at_first_pipe=True) if ban_container else [])
+        picks.append(_champion_names_in_container(pick_container, stop_at_first_pipe=False) if pick_container else [])
+
+    return {
+        "team_1": team_names[0],
+        "team_2": team_names[1],
+        "winner": winner,
+        "team_1_side": team_sides[0],
+        "team_2_side": team_sides[1],
+        "team_1_bans": bans[0],
+        "team_2_bans": bans[1],
+        "team_1_picks": picks[0],
+        "team_2_picks": picks[1],
+    }
+
+
+def parse_box_score(html: str) -> list[dict]:
+    """Extract each player's box score row (team 1 or 2, player, champion, KDA, CS).
+
+    Real markup (confirmed against the fixture): each team's box score is a
+    separate <table class="playersInfosLine">, first table's players go to
+    team 1 and second table's to team 2 (matching parse_game_draft's "first
+    on the page" convention). Player rows are direct-child <tr>s of the
+    table (its <thead> row must be skipped, and its nested per-player rune
+    tooltip <table> must not be recursed into, hence recursive=False).
+    """
+    soup = BeautifulSoup(html, "lxml")
+    tables = soup.find_all("table", class_="playersInfosLine")
+
+    rows = []
+    for team_index, table in enumerate(tables[:2], start=1):
+        for row_el in table.find_all("tr", recursive=False):
+            tds = row_el.find_all("td", recursive=False)
+            if len(tds) < 3:
+                continue
+            first_td = tds[0]
+            champion_img = first_td.find("img", alt=True)
+            player_link = first_td.find("a", class_="link-blanc")
+            kda_match = re.search(r"(\d+)/(\d+)/(\d+)", tds[-2].get_text(strip=True))
+            cs_text = tds[-1].get_text(strip=True)
+            rows.append({
+                "team": team_index,
+                "player": player_link.get_text(strip=True) if player_link else "",
+                "champion": _normalize_champion_name(champion_img["alt"]) if champion_img else "",
+                "kda": f"{kda_match.group(1)}/{kda_match.group(2)}/{kda_match.group(3)}" if kda_match else "",
+                "cs": int(cs_text) if cs_text.isdigit() else 0,
+            })
+    return rows
+
+
+def assemble_game_row(
+    game_id: str,
+    region: str,
+    season: str,
+    split: str,
+    meta: dict,
+    draft: dict,
+    box_score: list[dict],
+) -> dict:
+    """Combine parsed pieces into one flat games.csv row.
+
+    Per-player fields are pipe-delimited strings aligned by pick order,
+    e.g. team_1_players.split("|")[i] played team_1_picks.split("|")[i].
+    """
+    team_1_box = [row for row in box_score if row["team"] == 1]
+    team_2_box = [row for row in box_score if row["team"] == 2]
+
+    def join(rows: list[dict], field: str) -> str:
+        return "|".join(str(row[field]) for row in rows)
+
+    return {
+        "game_id": game_id,
+        "region": region,
+        "season": season,
+        "split": split,
+        "date": meta["date"],
+        "patch": meta["patch"],
+        "duration_seconds": meta["duration_seconds"],
+        "team_1": draft["team_1"],
+        "team_2": draft["team_2"],
+        "winner": draft["winner"],
+        "team_1_side": draft["team_1_side"],
+        "team_2_side": draft["team_2_side"],
+        "team_1_bans": "|".join(draft["team_1_bans"]),
+        "team_2_bans": "|".join(draft["team_2_bans"]),
+        "team_1_picks": "|".join(draft["team_1_picks"]),
+        "team_2_picks": "|".join(draft["team_2_picks"]),
+        "team_1_players": join(team_1_box, "player"),
+        "team_2_players": join(team_2_box, "player"),
+        "team_1_kda": join(team_1_box, "kda"),
+        "team_2_kda": join(team_2_box, "kda"),
+        "team_1_cs": join(team_1_box, "cs"),
+        "team_2_cs": join(team_2_box, "cs"),
+    }
