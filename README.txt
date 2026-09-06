@@ -270,26 +270,30 @@ All four items below are open. None is resolved.
 VERSION CONTROL
 -----------------
 
-CPTAC is git-free. This project is different. It is meant to live on
-GitHub. That is not set up yet. Nothing here is a git repository. No
-remote exists. No .gitignore is in place. Setup is still needed before
-the first commit. It needs: git init, a .gitignore that excludes large
-scraped and cached data, creation of the remote repository, and a
-decision about what belongs in the repository against what stays
-local-only cache. The gol.gg pulls and any intermediate tables could
-get large, the same way CPTAC's gdc_cache did. None of this is done
-yet.
+CPTAC is git-free. This project is different. It lives on GitHub, as a
+public repository, on purpose. This is a portfolio project, so the code
+should be visible to others.
+
+Repository: https://github.com/adamhibbert21/lol-esports-pipeline
+Local setup is done: git init ran, the first commit is in, and the
+remote is linked to the main branch. A .gitignore excludes large or
+regenerable files (Python caches, Jupyter checkpoints, a planned
+data_cache/ folder for raw scraped pulls, and zip files). The gol.gg
+pulls and any intermediate tables could get large, the same way CPTAC's
+gdc_cache did, so those stay out of the repository and live only on
+disk locally.
+
+Still to decide: whether small derived output tables and figures
+(outputs/tables, outputs/figures) should be committed for others to
+see, or excluded like the raw cache. Not decided yet.
 
 
 NEXT STEPS
 -----------
 
-  1. Set up git and GitHub for this project. That means a local
-     repository, a remote, and a .gitignore that excludes large cached
-     data.
-  2. Scaffold the project folder to match CPTAC's layout. That means
+  1. Scaffold the project folder to match CPTAC's layout. That means
      outputs/tables, outputs/figures, and a shared config pattern.
-  3. Build lol_scrape.ipynb against LCK, LPL, LEC, and LCS only. Do a
+  2. Build lol_scrape.ipynb against LCK, LPL, LEC, and LCS only. Do a
      small-sample test run before any full-season pull.
-  4. Everything after that follows the pipeline order above. Take one
+  3. Everything after that follows the pipeline order above. Take one
      notebook and one implementation plan at a time.
