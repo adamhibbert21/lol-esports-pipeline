@@ -71,6 +71,21 @@ def latest_scrape_snapshot(region: str) -> Path | None:
     return snapshots[-1] if snapshots else None
 
 
+def global_scrape_snapshot_dir(date: dt.date | None = None) -> Path:
+    """Path to a dated snapshot folder for data that is not region-specific: data_cache/global/<YYYY-MM-DD>/."""
+    date = date or dt.date.today()
+    return DATA_CACHE_DIR / "global" / date.isoformat()
+
+
+def latest_global_scrape_snapshot() -> Path | None:
+    """Most recent dated global snapshot folder, or None if none exist yet."""
+    global_dir = DATA_CACHE_DIR / "global"
+    if not global_dir.exists():
+        return None
+    snapshots = sorted(p for p in global_dir.iterdir() if p.is_dir())
+    return snapshots[-1] if snapshots else None
+
+
 def save_table(df: pd.DataFrame, name: str, region: str) -> Path:
     """Write a DataFrame to outputs/tables/<region>/<name>.csv and return the path."""
     _check_region(region)
