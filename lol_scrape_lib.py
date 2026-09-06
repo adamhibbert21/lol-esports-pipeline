@@ -317,3 +317,66 @@ def assemble_game_row(
         "team_1_cs": join(team_1_box, "cs"),
         "team_2_cs": join(team_2_box, "cs"),
     }
+
+
+def scrape_region_teams(region: str, season: str, split: str, session: requests.Session) -> pd.DataFrame:
+    """Fetch the teams list for a season/split, filtered to one region, with each row's team_id.
+
+    team_id is not part of gol.gg's table itself (pandas.read_html only
+    sees the stats columns); it lives in each row's link href, so this
+    parses the same raw HTML a second time, directly, for the
+    name-to-team_id mapping.
+    """
+    html = fetch_html(list_url("teams", season, split), session)
+    df = filter_to_target_regions(parse_list_table(html), [region])
+    soup = BeautifulSoup(html, "lxml")
+    team_id_by_name = {}
+    for link in soup.find_all("a", href=True):
+        match = re.search(r"/team-stats/(\d+)/", link["href"])
+        if match:
+            team_id_by_name[link.get_text(strip=True)] = match.group(1)
+    df["team_id"] = df["Name"].map(team_id_by_name)
+    return df.dropna(subset=["team_id"]).reset_index(drop=True)
+
+
+def scrape_global_list(entity: str, season: str, split: str, session: requests.Session) -> pd.DataFrame:
+    """Fetch a players or champion list for a season/split, unfiltered (see plan notes on why these are not region-split)."""
+    html = fetch_html(list_url(entity, season, split), session)
+    return parse_list_table(html)
+
+
+def scrape_region_games(
+    region: str,
+    season: str,
+    split: str,
+    teams_df: pd.DataFrame,
+    session: requests.Session,
+    already_fetched_ids: set[str],
+    on_row,
+    on_failure,
+) -> None:
+    """Walk every team's match list, fetch each new game, and report each parsed row (or failure) via callback.
+
+    Resumable by construction: already_fetched_ids is whatever games.csv
+    already has on disk, so a game already written is never re-fetched.
+    A game that fails to fetch or parse is reported to on_failure and the
+    walk continues; it does not stop the whole run.
+    """
+    matchlist_rows: list[dict] = []
+    for _, team in teams_df.iterrows():
+        team_id = team["team_id"]
+        matchlist_html = fetch_html(team_matchlist_url(team_id, split), session)
+        matchlist_rows.extend(parse_team_matchlist(matchlist_html))
+
+    for game_id in discover_game_ids(matchlist_rows):
+        if game_id in already_fetched_ids:
+            continue
+        try:
+            game_html = fetch_html(game_stats_url(game_id), session)
+            meta = parse_game_meta(game_html)
+            draft = parse_game_draft(game_html)
+            box_score = parse_box_score(game_html)
+            row = assemble_game_row(game_id, region, season, split, meta, draft, box_score)
+            on_row(row)
+        except Exception as error:  # noqa: BLE001, one bad game must not stop the whole scrape
+            on_failure({"game_id": game_id, "url": game_stats_url(game_id), "error": str(error)})

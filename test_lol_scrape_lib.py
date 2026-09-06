@@ -221,3 +221,53 @@ def test_assemble_game_row_builds_expected_flat_row():
     assert row["team_1_side"] == "Blue"
     assert row["team_2_side"] == "Red"
 
+
+def test_scrape_region_teams_filters_tags_region_and_adds_team_id(monkeypatch):
+    html = (FIXTURES / "teams_list.html").read_text(encoding="utf-8")
+    monkeypatch.setattr(lol_scrape_lib, "fetch_html", lambda url, session, **kw: html)
+    df = lol_scrape_lib.scrape_region_teams("LCK", "S16", "Summer", session=MagicMock())
+    assert len(df) > 0
+    # Region column stays in gol.gg's native code (see filter_to_target_regions, Task 4),
+    # not translated back to the project's league name.
+    assert set(df["Region"].unique()) <= {lol_scrape_lib.GOLGG_REGION_CODES["LCK"]}
+    assert "team_id" in df.columns
+    assert df["team_id"].notna().all()
+
+
+def test_scrape_global_list_returns_unfiltered_table(monkeypatch):
+    html = (FIXTURES / "champion_list.html").read_text(encoding="utf-8")
+    monkeypatch.setattr(lol_scrape_lib, "fetch_html", lambda url, session, **kw: html)
+    df = lol_scrape_lib.scrape_global_list("champion", "S16", "Summer", session=MagicMock())
+    assert len(df) > 0
+    assert "Champion" in df.columns
+
+
+def test_scrape_region_games_skips_already_fetched_and_calls_on_row(monkeypatch):
+    matchlist_html = (FIXTURES / "team_matchlist.html").read_text(encoding="utf-8")
+    game_html = (FIXTURES / "game_stats.html").read_text(encoding="utf-8")
+
+    def fake_fetch(url, session, **kw):
+        return game_html if "/game/stats/" in url else matchlist_html
+
+    monkeypatch.setattr(lol_scrape_lib, "fetch_html", fake_fetch)
+
+    teams_df = pd.DataFrame({"Name": ["Anubis Gaming"], "team_id": ["2833"]})
+    seen_rows = []
+    failures = []
+
+    lol_scrape_lib.scrape_region_games(
+        region="LCK",
+        season="S16",
+        split="Summer",
+        teams_df=teams_df,
+        session=MagicMock(),
+        already_fetched_ids={"79871"},
+        on_row=seen_rows.append,
+        on_failure=failures.append,
+    )
+
+    fetched_ids = {row["game_id"] for row in seen_rows}
+    assert "79871" not in fetched_ids
+    assert "80757" in fetched_ids
+    assert failures == []
+
