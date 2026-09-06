@@ -159,21 +159,18 @@ def _side_from_element(el) -> str | None:
     return None
 
 
-def _champion_names_in_container(container, stop_at_first_pipe: bool) -> list[str]:
+def _champion_names_in_container(container) -> list[str]:
     """Collect champion img alt-text from a bans/picks container's direct children.
 
     Real markup (confirmed against the fixture): each container mixes
     <a><img alt="Champion"></a> tags with bare "|" text nodes marking draft
-    phase boundaries (e.g. bans phase 1 vs phase 2). For picks we want the
-    full ordered list regardless of phase, so pipes are just skipped. For
-    bans the confirmed oracle values only cover the first ban phase (3
-    champions before the first "|"), so stop_at_first_pipe=True halts there.
+    phase boundaries (e.g. bans phase 1 vs phase 2, or picks phase 1 vs
+    phase 2). Both bans and picks want the full ordered list regardless of
+    phase, so "|" text nodes are just skipped.
     """
     names = []
     for child in container.children:
         if isinstance(child, NavigableString):
-            if stop_at_first_pipe and "|" in child:
-                break
             continue
         img = child.find("img", alt=True)
         if img and img.get("alt", "").strip():
@@ -226,8 +223,8 @@ def parse_game_draft(html: str) -> dict:
         picks_label = team_block.find(string=re.compile(r"^\s*Picks"))
         ban_container = bans_label.find_parent("div").find_next_sibling("div", class_="col-10") if bans_label else None
         pick_container = picks_label.find_parent("div").find_next_sibling("div", class_="col-10") if picks_label else None
-        bans.append(_champion_names_in_container(ban_container, stop_at_first_pipe=True) if ban_container else [])
-        picks.append(_champion_names_in_container(pick_container, stop_at_first_pipe=False) if pick_container else [])
+        bans.append(_champion_names_in_container(ban_container) if ban_container else [])
+        picks.append(_champion_names_in_container(pick_container) if pick_container else [])
 
     return {
         "team_1": team_names[0],

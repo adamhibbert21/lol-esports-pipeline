@@ -158,8 +158,8 @@ def test_parse_game_draft_matches_confirmed_values():
     assert winner_name == "ANB"
     winner_bans = draft["team_1_bans"] if draft["winner"] == "team_1" else draft["team_2_bans"]
     loser_bans = draft["team_2_bans"] if draft["winner"] == "team_1" else draft["team_1_bans"]
-    assert set(winner_bans) == {"Nocturne", "Jayce", "Anivia"}
-    assert set(loser_bans) == {"Cassiopeia", "Camille", "Syndra"}
+    assert set(winner_bans) == {"Nocturne", "Jayce", "Anivia", "Jhin", "Gnar"}
+    assert set(loser_bans) == {"Cassiopeia", "Camille", "Syndra", "Alistar", "Nautilus"}
     winner_picks = draft["team_1_picks"] if draft["winner"] == "team_1" else draft["team_2_picks"]
     assert winner_picks == ["Ryze", "Rumble", "Xin Zhao", "Sivir", "Lulu"]
     # Side is genuinely unconfirmed for this fixture (nobody has checked which
