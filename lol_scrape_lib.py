@@ -8,11 +8,13 @@ snapshot writing itself.
 from __future__ import annotations
 
 import hashlib
+import re
 import time
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 
 import pandas as pd
 import requests
+from bs4 import BeautifulSoup
 
 BASE_URL = "https://gol.gg"
 USER_AGENT = "lol-esports-pipeline-research/1.0 (+https://github.com/adamhibbert21/lol-esports-pipeline)"
@@ -77,3 +79,19 @@ def hash_table(df: pd.DataFrame) -> str:
     """Order-independent content hash of a DataFrame, for the staleness guard."""
     normalized = df.sort_index(axis=1).sort_values(by=list(df.columns)).reset_index(drop=True)
     return hashlib.sha256(normalized.to_csv(index=False).encode("utf-8")).hexdigest()
+
+
+def parse_team_matchlist(html: str) -> list[dict]:
+    """Extract each game link (game_id and URL) from a team's match-list page."""
+    soup = BeautifulSoup(html, "lxml")
+    rows = []
+    for link in soup.find_all("a", href=True):
+        match = re.search(r"/game/stats/(\d+)/", link["href"])
+        if match:
+            rows.append({"game_id": match.group(1), "url": urljoin(BASE_URL, link["href"])})
+    return rows
+
+
+def discover_game_ids(matchlist_rows: list[dict]) -> list[str]:
+    """Dedup game IDs across one or more teams' match lists, preserving first-seen order."""
+    return list(dict.fromkeys(row["game_id"] for row in matchlist_rows))

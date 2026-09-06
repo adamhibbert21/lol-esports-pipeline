@@ -118,3 +118,26 @@ def test_filter_to_target_regions_includes_lcs_na_teams():
     assert (team_names.str.contains("cloud9", na=False).any() or
             team_names.str.contains("team liquid", na=False).any())
 
+
+def test_parse_team_matchlist_finds_known_game_ids():
+    html = (FIXTURES / "team_matchlist.html").read_text(encoding="utf-8")
+    rows = lol_scrape_lib.parse_team_matchlist(html)
+    game_ids = {row["game_id"] for row in rows}
+    expected = {
+        "80757", "80756", "80755", "80747", "80746", "80380",
+        "80379", "80039", "80038", "79884", "79883", "79872", "79871",
+    }
+    assert expected <= game_ids
+
+
+def test_parse_team_matchlist_rows_have_url_key():
+    html = (FIXTURES / "team_matchlist.html").read_text(encoding="utf-8")
+    rows = lol_scrape_lib.parse_team_matchlist(html)
+    assert all("url" in row for row in rows)
+    assert all(row["url"].startswith("https://gol.gg/game/stats/") for row in rows)
+
+
+def test_discover_game_ids_dedupes_preserving_order():
+    rows = [{"game_id": "1"}, {"game_id": "2"}, {"game_id": "1"}, {"game_id": "3"}]
+    assert lol_scrape_lib.discover_game_ids(rows) == ["1", "2", "3"]
+
