@@ -162,13 +162,10 @@ def test_parse_game_draft_matches_confirmed_values():
     assert set(loser_bans) == {"Cassiopeia", "Camille", "Syndra", "Alistar", "Nautilus"}
     winner_picks = draft["team_1_picks"] if draft["winner"] == "team_1" else draft["team_2_picks"]
     assert winner_picks == ["Ryze", "Rumble", "Xin Zhao", "Sivir", "Lulu"]
-    # Side is genuinely unconfirmed for this fixture (nobody has checked which
-    # color ANB played), so only check it came back as one of the two valid
-    # values, or None if Step 4's inspection finds no reliable color/class cue.
-    assert draft["team_1_side"] in {"Blue", "Red", None}
-    assert draft["team_2_side"] in {"Blue", "Red", None}
-    if draft["team_1_side"] is not None and draft["team_2_side"] is not None:
-        assert draft["team_1_side"] != draft["team_2_side"]
+    # Side is confirmed for this fixture: ANB's outcome header carries class
+    # "blue-line-header" and Disruptors' carries "red-line-header".
+    assert draft["team_1_side"] == "Blue"
+    assert draft["team_2_side"] == "Red"
 
 
 def test_parse_box_score_matches_confirmed_rows():
