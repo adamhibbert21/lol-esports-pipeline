@@ -151,10 +151,15 @@ PIPELINE ORDER (PLANNED)
 --------------------------
 
     lol_scrape.ipynb    (pull and cache gol.gg tables: players, teams,
-    |                     champions, games; content-hash staleness
-    |                     guard, so re-scraping a live season neither
-    |                     goes stale silently nor re-pulls unchanged
-    |                     data silently)
+    |                     champions, games; each run writes into its own
+    |                     data_cache/<region>/<YYYY-MM-DD>/ snapshot
+    |                     folder, so any later table or prediction can be
+    |                     traced to the exact day it was scraped; a
+    |                     content-hash staleness guard compares a fresh
+    |                     pull against the latest snapshot, so
+    |                     re-scraping a live season neither goes stale
+    |                     silently nor re-pulls unchanged data into a new
+    |                     folder silently)
     |
     +--> lol_qc.ipynb    (entity resolution for team rebrands and
     |                      player transfers; patch-version
