@@ -164,6 +164,8 @@ def test_parse_game_meta_matches_confirmed_values():
     assert meta["duration_seconds"] == 21 * 60 + 45
     assert meta["patch"] == "16.15"
     assert meta["date"] == "2026-08-05"
+    # Fixture's page title is "ANB vs Disruptors game 3 - Arabian League ...".
+    assert meta["game_number_in_series"] == 3
 
 
 def test_parse_game_draft_matches_confirmed_values():
@@ -208,7 +210,7 @@ def test_parse_box_score_matches_confirmed_rows():
 
 
 def test_assemble_game_row_builds_expected_flat_row():
-    meta = {"date": "2026-08-05", "patch": "16.15", "duration_seconds": 1305}
+    meta = {"date": "2026-08-05", "patch": "16.15", "duration_seconds": 1305, "game_number_in_series": 3}
     draft = {
         "team_1": "ANB",
         "team_2": "Disruptors",
@@ -227,6 +229,8 @@ def test_assemble_game_row_builds_expected_flat_row():
     ]
     row = lol_scrape_lib.assemble_game_row("80757", "LCK", "S16", "Summer", "LCK 2026 Rounds 3-4", meta, draft, box_score)
     assert row["game_id"] == "80757"
+    assert row["series_id"] == "ANB|Disruptors_2026-08-05"
+    assert row["game_number_in_series"] == 3
     assert row["region"] == "LCK"
     assert row["tournament"] == "LCK 2026 Rounds 3-4"
     assert row["winner"] == "team_1"
@@ -269,7 +273,7 @@ def test_scrape_global_list_fetches_by_tournament_and_tags_region(monkeypatch):
 
 
 def test_games_row_columns_matches_assemble_game_row_keys():
-    meta = {"date": "2026-08-05", "patch": "16.15", "duration_seconds": 1305}
+    meta = {"date": "2026-08-05", "patch": "16.15", "duration_seconds": 1305, "game_number_in_series": 3}
     draft = {
         "team_1": "ANB",
         "team_2": "Disruptors",

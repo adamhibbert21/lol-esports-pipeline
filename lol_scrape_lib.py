@@ -126,12 +126,20 @@ def discover_game_ids(matchlist_rows: list[dict]) -> list[str]:
 
 
 def parse_game_meta(html: str) -> dict:
-    """Extract duration (seconds), patch, and date from a game page's plain text.
+    """Extract duration (seconds), patch, date, and game-in-series number from a game page.
 
-    Uses text search rather than specific tags/classes, since these three
-    values are short, distinctively formatted strings ("Game Time MM:SS",
-    "vXX.YY", "YYYY-MM-DD") that are easy to find reliably in the page's
-    full text regardless of exactly which element wraps them.
+    Duration/patch/date come from plain-text search, since they're short,
+    distinctively formatted strings ("Game Time MM:SS", "vXX.YY",
+    "YYYY-MM-DD") that are easy to find reliably regardless of exactly
+    which element wraps them.
+
+    game_number_in_series comes from the page <title> instead (confirmed
+    against the fixture: "ANB vs Disruptors game 3 - Arabian League 2026
+    Summer WEEK4 - Games of Legends"), which is gol.gg's own record of a
+    game's position within its Bo1/Bo3/Bo5 series - not derivable from a
+    single game page's other content, and not something this pipeline
+    tracked before (a game_id alone doesn't say whether it's game 1 of a
+    Bo1 or game 3 of a Bo3).
     """
     soup = BeautifulSoup(html, "lxml")
     text = soup.get_text(" ", strip=True)
@@ -142,10 +150,16 @@ def parse_game_meta(html: str) -> dict:
     patch_match = re.search(r"\bv(\d+\.\d+)\b", text)
     date_match = re.search(r"(\d{4}-\d{2}-\d{2})", text)
 
+    title = soup.title.get_text() if soup.title else ""
+    game_number_match = re.search(r"\bgame (\d+)\b", title, re.IGNORECASE)
+    if game_number_match is None:
+        raise ValueError("could not find 'game N' in the page title; adjust the selector above")
+
     return {
         "duration_seconds": int(minutes) * 60 + int(seconds),
         "patch": patch_match.group(1),
         "date": date_match.group(1),
+        "game_number_in_series": int(game_number_match.group(1)),
     }
 
 
@@ -327,6 +341,14 @@ def assemble_game_row(
 
     Per-player fields are pipe-delimited strings aligned by pick order,
     e.g. team_1_players.split("|")[i] played team_1_picks.split("|")[i].
+
+    series_id groups the individual games (maps) of one Bo1/Bo3/Bo5 series
+    together: gol.gg has no single ID for this, so it's derived from the
+    two team names (sorted, since team_1/team_2 is page order, not a
+    stable per-team identity) plus the date, which two teams share across
+    every game of the same series. game_number_in_series (from meta, the
+    game page's own "game N" title text) says where in that series this
+    particular row falls.
     """
     team_1_box = [row for row in box_score if row["team"] == 1]
     team_2_box = [row for row in box_score if row["team"] == 2]
@@ -334,8 +356,12 @@ def assemble_game_row(
     def join(rows: list[dict], field: str) -> str:
         return "|".join(str(row[field]) for row in rows)
 
+    series_id = "|".join(sorted([draft["team_1"], draft["team_2"]])) + "_" + meta["date"]
+
     return {
         "game_id": game_id,
+        "series_id": series_id,
+        "game_number_in_series": meta["game_number_in_series"],
         "region": region,
         "season": season,
         "split": split,
@@ -366,11 +392,11 @@ def assemble_game_row(
 # prior-schema games.csv before carrying its rows forward (see Task 9 review
 # finding on silent schema-mismatched carry-forward corruption).
 GAMES_ROW_COLUMNS = [
-    "game_id", "region", "season", "split", "tournament", "date", "patch",
-    "duration_seconds", "team_1", "team_2", "winner", "team_1_side",
-    "team_2_side", "team_1_bans", "team_2_bans", "team_1_picks",
-    "team_2_picks", "team_1_players", "team_2_players", "team_1_kda",
-    "team_2_kda", "team_1_cs", "team_2_cs",
+    "game_id", "series_id", "game_number_in_series", "region", "season",
+    "split", "tournament", "date", "patch", "duration_seconds", "team_1",
+    "team_2", "winner", "team_1_side", "team_2_side", "team_1_bans",
+    "team_2_bans", "team_1_picks", "team_2_picks", "team_1_players",
+    "team_2_players", "team_1_kda", "team_2_kda", "team_1_cs", "team_2_cs",
 ]
 
 
