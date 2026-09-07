@@ -91,7 +91,8 @@ def hash_table(df: pd.DataFrame) -> str:
     must also read that CSV with dtype=str for this to work.
     """
     stringified = df.astype(str)
-    normalized = stringified.sort_index(axis=1).sort_values(by=list(stringified.columns)).reset_index(drop=True)
+    normalized = stringified.sort_index(axis=1)
+    normalized = normalized.sort_values(by=list(normalized.columns)).reset_index(drop=True)
     return hashlib.sha256(normalized.to_csv(index=False).encode("utf-8")).hexdigest()
 
 
@@ -162,6 +163,7 @@ _CHAMPION_NAME_FIXES = {
     "reksai": "Rek'Sai",
     "velkoz": "Vel'Koz",
     "belveth": "Bel'Veth",
+    "kogmaw": "Kog'Maw",
 }
 
 
@@ -196,6 +198,11 @@ def _champion_names_in_container(container) -> list[str]:
     phase boundaries (e.g. bans phase 1 vs phase 2, or picks phase 1 vs
     phase 2). Both bans and picks want the full ordered list regardless of
     phase, so "|" text nodes are just skipped.
+
+    A declined ban renders as a bare <img alt=""> with no wrapping <a> and
+    no real champion (confirmed live, gol.gg game 80200); find("img", alt=True)
+    only matches an <a>-wrapped image, so a declined ban's empty alt is
+    correctly (if incidentally) never collected here.
     """
     names = []
     for child in container.children:
@@ -399,22 +406,31 @@ def scrape_region_teams(
     df = df.dropna(subset=["team_id"]).reset_index(drop=True)
     if len(team_id_by_name) > 0 and len(df) == 0:
         raise ValueError(f"teams list for {region}/{tournament} matched region rows but none resolved a team_id; gol.gg's team-stats link format may have changed")
+    # Renamed from gol.gg's own "Region" (server code, e.g. "KR") so it can't
+    # collide with the new project-vocabulary "region" (e.g. "LCK") column
+    # below under a case-insensitive column lookup.
+    df = df.rename(columns={"Region": "golgg_region"})
     df["region"], df["season"], df["split"], df["tournament"] = region, season, split, tournament
     return df
 
 
-def scrape_global_list(entity: str, region: str, season: str, split: str, session: requests.Session) -> pd.DataFrame:
-    """Fetch a players or champion list for a season/split, unfiltered, tagged with region/season/split.
+def scrape_global_list(
+    entity: str, region: str, season: str, split: str, tournament: str, session: requests.Session
+) -> pd.DataFrame:
+    """Fetch one region's real-tournament players or champion list, tagged with region/season/split/tournament.
 
-    region defaults to "GLOBAL" at the call site (see plan notes on why
-    these are not region-split); still tagged with season/split so a
-    saved CSV's coverage is not inferable only from its folder date.
+    Narrowed the same way scrape_region_teams is (players/champion lists
+    have no Region column to filter afterward, so fetching by real
+    tournament name is the only way to scope this to one league - the
+    same gol.gg mechanism, confirmed live to work for these two entities
+    too: LCK 2026 Rounds 3-4 returns 55 players, not the ~1371-row global
+    list). Callers fetch and concat one call per target region.
     """
-    html = fetch_html(list_url(entity, season, split), session)
+    html = fetch_html(list_url(entity, season, split, tournament), session)
     df = parse_list_table(html)
     expected = {"players": ["Player"], "champion": ["Champion"]}.get(entity, [])
-    _require_columns(df, expected, f"{entity} list")
-    df["region"], df["season"], df["split"] = region, season, split
+    _require_columns(df, expected, f"{entity} list ({region}/{tournament})")
+    df["region"], df["season"], df["split"], df["tournament"] = region, season, split, tournament
     return df
 
 

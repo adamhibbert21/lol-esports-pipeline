@@ -69,6 +69,17 @@ def test_fetch_html_raises_after_max_retries():
     assert session.get.call_count == 2
 
 
+def test_fetch_html_does_not_retry_a_client_error():
+    session = MagicMock()
+    response = MagicMock(status_code=404)
+    error = requests.HTTPError(response=response)
+    session.get.return_value.raise_for_status.side_effect = error
+    with patch("lol_scrape_lib.time.sleep"):
+        with pytest.raises(RuntimeError):
+            lol_scrape_lib.fetch_html("https://gol.gg/x", session, delay=0, max_retries=3)
+    assert session.get.call_count == 1
+
+
 def test_parse_list_table_teams_fixture_has_expected_columns():
     html = (FIXTURES / "teams_list.html").read_text(encoding="utf-8")
     df = lol_scrape_lib.parse_list_table(html)
@@ -233,9 +244,10 @@ def test_scrape_region_teams_filters_tags_region_and_adds_team_id(monkeypatch):
     monkeypatch.setattr(lol_scrape_lib, "fetch_html", lambda url, session, **kw: html)
     df = lol_scrape_lib.scrape_region_teams("LCK", "S16", "Summer", "LCK 2026 Rounds 3-4", session=MagicMock())
     assert len(df) > 0
-    # Region column stays in gol.gg's native code (see filter_to_target_regions, Task 4),
-    # not translated back to the project's league name.
-    assert set(df["Region"].unique()) <= {lol_scrape_lib.GOLGG_REGION_CODES["LCK"]}
+    # gol.gg's native "Region" code is renamed to golgg_region so it can't
+    # collide with the new project-vocabulary "region" column below.
+    assert "Region" not in df.columns
+    assert set(df["golgg_region"].unique()) <= {lol_scrape_lib.GOLGG_REGION_CODES["LCK"]}
     assert "team_id" in df.columns
     assert df["team_id"].notna().all()
     assert set(df["region"].unique()) == {"LCK"}
@@ -244,13 +256,14 @@ def test_scrape_region_teams_filters_tags_region_and_adds_team_id(monkeypatch):
     assert set(df["tournament"].unique()) == {"LCK 2026 Rounds 3-4"}
 
 
-def test_scrape_global_list_returns_unfiltered_table(monkeypatch):
+def test_scrape_global_list_fetches_by_tournament_and_tags_region(monkeypatch):
     html = (FIXTURES / "champion_list.html").read_text(encoding="utf-8")
     monkeypatch.setattr(lol_scrape_lib, "fetch_html", lambda url, session, **kw: html)
-    df = lol_scrape_lib.scrape_global_list("champion", "GLOBAL", "S16", "Summer", session=MagicMock())
+    df = lol_scrape_lib.scrape_global_list("champion", "LCK", "S16", "Summer", "LCK 2026 Rounds 3-4", session=MagicMock())
     assert len(df) > 0
     assert "Champion" in df.columns
-    assert set(df["region"].unique()) == {"GLOBAL"}
+    assert set(df["region"].unique()) == {"LCK"}
+    assert set(df["tournament"].unique()) == {"LCK 2026 Rounds 3-4"}
     assert set(df["season"].unique()) == {"S16"}
     assert set(df["split"].unique()) == {"Summer"}
 
