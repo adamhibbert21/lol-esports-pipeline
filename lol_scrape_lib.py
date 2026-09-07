@@ -49,6 +49,11 @@ def fetch_html(url: str, session: requests.Session, delay: float = 1.5, max_retr
             response.raise_for_status()
             time.sleep(delay)
             return response.text
+        except requests.HTTPError as error:
+            if error.response is not None and 400 <= error.response.status_code < 500:
+                raise RuntimeError(f"Failed to fetch {url}: {error.response.status_code} (not retrying a client error)") from error
+            last_error = error
+            time.sleep(delay * (attempt + 1))
         except requests.RequestException as error:
             last_error = error
             time.sleep(delay * (attempt + 1))
@@ -76,9 +81,31 @@ def filter_to_target_regions(df: pd.DataFrame, regions: list[str]) -> pd.DataFra
 
 
 def hash_table(df: pd.DataFrame) -> str:
-    """Order-independent content hash of a DataFrame, for the staleness guard."""
-    normalized = df.sort_index(axis=1).sort_values(by=list(df.columns)).reset_index(drop=True)
+    """Order-independent content hash of a DataFrame, for the staleness guard.
+
+    Stringifies every value first: pd.read_html and pd.read_csv infer
+    different dtypes for identical source text (e.g. "0.50" stays object
+    from read_html but becomes float64 0.5 after a read_csv round-trip),
+    so hashing typed values made identical content hash differently.
+    Every caller comparing a freshly-parsed frame against a reloaded CSV
+    must also read that CSV with dtype=str for this to work.
+    """
+    stringified = df.astype(str)
+    normalized = stringified.sort_index(axis=1).sort_values(by=list(stringified.columns)).reset_index(drop=True)
     return hashlib.sha256(normalized.to_csv(index=False).encode("utf-8")).hexdigest()
+
+
+def _require_columns(df: pd.DataFrame, columns: list[str], context: str) -> None:
+    """Fail loudly if a parsed list table is missing an expected column.
+
+    A silently-malformed list table (gol.gg renamed or removed a column)
+    would corrupt every later notebook, so this raises instead of letting
+    a KeyError surface later somewhere less obvious, or letting a
+    since-renamed column silently vanish from a downstream selection.
+    """
+    missing = [c for c in columns if c not in df.columns]
+    if missing:
+        raise ValueError(f"{context}: missing expected column(s) {missing}, gol.gg's table schema may have changed")
 
 
 def parse_team_matchlist(html: str) -> list[dict]:
@@ -121,24 +148,26 @@ def parse_game_meta(html: str) -> dict:
     }
 
 
-# gol.gg strips apostrophes from champion img alt text (e.g. "KSante" instead
-# of "K'Sante"). Confirmed against the real game_stats.html fixture, where the
-# box score's champion icons for K'Sante come through with no apostrophe.
-# Listed here are the known LoL champions whose names contain one.
+# gol.gg strips apostrophes from champion img alt text, but inconsistently
+# cases the surrounding letters when it does (e.g. "KSante" but "Kaisa",
+# "ChoGath" but "Chogath" - confirmed against real pick/ban data, not a
+# single fixture). Casefolding both sides of the lookup handles every
+# variant in one place instead of enumerating each casing gol.gg happens
+# to use.
 _CHAMPION_NAME_FIXES = {
-    "KSante": "K'Sante",
-    "KaiSa": "Kai'Sa",
-    "KhaZix": "Kha'Zix",
-    "ChoGath": "Cho'Gath",
-    "RekSai": "Rek'Sai",
-    "VelKoz": "Vel'Koz",
-    "BelVeth": "Bel'Veth",
+    "ksante": "K'Sante",
+    "kaisa": "Kai'Sa",
+    "khazix": "Kha'Zix",
+    "chogath": "Cho'Gath",
+    "reksai": "Rek'Sai",
+    "velkoz": "Vel'Koz",
+    "belveth": "Bel'Veth",
 }
 
 
 def _normalize_champion_name(name: str) -> str:
     """Restore apostrophes gol.gg strips from certain champion names."""
-    return _CHAMPION_NAME_FIXES.get(name, name)
+    return _CHAMPION_NAME_FIXES.get(name.replace("'", "").lower(), name)
 
 
 def _side_from_element(el) -> str | None:
@@ -226,6 +255,10 @@ def parse_game_draft(html: str) -> dict:
         bans.append(_champion_names_in_container(ban_container) if ban_container else [])
         picks.append(_champion_names_in_container(pick_container) if pick_container else [])
 
+    for team_index, team_picks in enumerate(picks, start=1):
+        if len(team_picks) != 5:
+            raise ValueError(f"team {team_index} has {len(team_picks)} picks, expected 5 (draft parse likely incomplete)")
+
     return {
         "team_1": team_names[0],
         "team_2": team_names[1],
@@ -278,6 +311,7 @@ def assemble_game_row(
     region: str,
     season: str,
     split: str,
+    tournament: str,
     meta: dict,
     draft: dict,
     box_score: list[dict],
@@ -298,6 +332,7 @@ def assemble_game_row(
         "region": region,
         "season": season,
         "split": split,
+        "tournament": tournament,
         "date": meta["date"],
         "patch": meta["patch"],
         "duration_seconds": meta["duration_seconds"],
@@ -319,16 +354,28 @@ def assemble_game_row(
     }
 
 
-def scrape_region_teams(region: str, season: str, split: str, session: requests.Session) -> pd.DataFrame:
-    """Fetch the teams list for a season/split, filtered to one region, with each row's team_id.
+def scrape_region_teams(
+    region: str, season: str, split: str, tournament: str, session: requests.Session
+) -> pd.DataFrame:
+    """Fetch one region's real tournament roster, tagged with region/season/split/tournament.
+
+    Fetching by a specific real tournament name (not "ALL" plus a
+    server-region filter) is what actually narrows to the target league:
+    gol.gg's Region column is a server region, which also contains that
+    server's academy/challenger/collegiate teams. filter_to_target_regions
+    stays as a defense-in-depth sanity check, not the primary filter.
 
     team_id is not part of gol.gg's table itself (pandas.read_html only
     sees the stats columns); it lives in each row's link href, so this
     parses the same raw HTML a second time, directly, for the
     name-to-team_id mapping.
     """
-    html = fetch_html(list_url("teams", season, split), session)
-    df = filter_to_target_regions(parse_list_table(html), [region])
+    html = fetch_html(list_url("teams", season, split, tournament), session)
+    table = parse_list_table(html)
+    _require_columns(table, ["Name", "Region"], f"teams list ({region}/{tournament})")
+    df = filter_to_target_regions(table, [region])
+    if len(table) > 0 and len(df) == 0:
+        raise ValueError(f"teams list for {region}/{tournament} returned rows but none matched region code {GOLGG_REGION_CODES[region]}")
     soup = BeautifulSoup(html, "lxml")
     team_id_by_name = {}
     for link in soup.find_all("a", href=True):
@@ -336,19 +383,33 @@ def scrape_region_teams(region: str, season: str, split: str, session: requests.
         if match:
             team_id_by_name[link.get_text(strip=True)] = match.group(1)
     df["team_id"] = df["Name"].map(team_id_by_name)
-    return df.dropna(subset=["team_id"]).reset_index(drop=True)
+    df = df.dropna(subset=["team_id"]).reset_index(drop=True)
+    if len(team_id_by_name) > 0 and len(df) == 0:
+        raise ValueError(f"teams list for {region}/{tournament} matched region rows but none resolved a team_id; gol.gg's team-stats link format may have changed")
+    df["region"], df["season"], df["split"], df["tournament"] = region, season, split, tournament
+    return df
 
 
-def scrape_global_list(entity: str, season: str, split: str, session: requests.Session) -> pd.DataFrame:
-    """Fetch a players or champion list for a season/split, unfiltered (see plan notes on why these are not region-split)."""
+def scrape_global_list(entity: str, region: str, season: str, split: str, session: requests.Session) -> pd.DataFrame:
+    """Fetch a players or champion list for a season/split, unfiltered, tagged with region/season/split.
+
+    region defaults to "GLOBAL" at the call site (see plan notes on why
+    these are not region-split); still tagged with season/split so a
+    saved CSV's coverage is not inferable only from its folder date.
+    """
     html = fetch_html(list_url(entity, season, split), session)
-    return parse_list_table(html)
+    df = parse_list_table(html)
+    expected = {"players": ["Player"], "champion": ["Champion"]}.get(entity, [])
+    _require_columns(df, expected, f"{entity} list")
+    df["region"], df["season"], df["split"] = region, season, split
+    return df
 
 
 def scrape_region_games(
     region: str,
     season: str,
     split: str,
+    tournament: str,
     teams_df: pd.DataFrame,
     session: requests.Session,
     already_fetched_ids: set[str],
@@ -365,7 +426,7 @@ def scrape_region_games(
     matchlist_rows: list[dict] = []
     for _, team in teams_df.iterrows():
         team_id = team["team_id"]
-        matchlist_html = fetch_html(team_matchlist_url(team_id, split), session)
+        matchlist_html = fetch_html(team_matchlist_url(team_id, split, tournament), session)
         matchlist_rows.extend(parse_team_matchlist(matchlist_html))
 
     for game_id in discover_game_ids(matchlist_rows):
@@ -376,7 +437,7 @@ def scrape_region_games(
             meta = parse_game_meta(game_html)
             draft = parse_game_draft(game_html)
             box_score = parse_box_score(game_html)
-            row = assemble_game_row(game_id, region, season, split, meta, draft, box_score)
+            row = assemble_game_row(game_id, region, season, split, tournament, meta, draft, box_score)
             on_row(row)
         except Exception as error:  # noqa: BLE001, one bad game must not stop the whole scrape
             on_failure({"game_id": game_id, "url": game_stats_url(game_id), "error": str(error)})

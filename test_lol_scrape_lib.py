@@ -109,6 +109,11 @@ def test_hash_table_changes_when_content_changes():
     assert lol_scrape_lib.hash_table(df1) != lol_scrape_lib.hash_table(df2)
 
 
+def test_normalize_champion_name_handles_both_casings():
+    assert lol_scrape_lib._normalize_champion_name("Kaisa") == "Kai'Sa"
+    assert lol_scrape_lib._normalize_champion_name("KSante") == "K'Sante"
+
+
 def test_filter_to_target_regions_includes_lcs_na_teams():
     """Verify LCS/NA teams survive the filter (critical: NA must use keep_default_na=False)."""
     html = (FIXTURES / "teams_list.html").read_text(encoding="utf-8")
@@ -209,9 +214,10 @@ def test_assemble_game_row_builds_expected_flat_row():
         {"team": 1, "player": "Maged", "champion": "Rumble", "kda": "4/1/10", "cs": 190},
         {"team": 2, "player": "owlonsky", "champion": "Aatrox", "kda": "0/5/1", "cs": 155},
     ]
-    row = lol_scrape_lib.assemble_game_row("80757", "LCK", "S16", "Summer", meta, draft, box_score)
+    row = lol_scrape_lib.assemble_game_row("80757", "LCK", "S16", "Summer", "LCK 2026 Rounds 3-4", meta, draft, box_score)
     assert row["game_id"] == "80757"
     assert row["region"] == "LCK"
+    assert row["tournament"] == "LCK 2026 Rounds 3-4"
     assert row["winner"] == "team_1"
     assert row["team_1_picks"] == "Ryze|Rumble|Xin Zhao|Sivir|Lulu"
     assert row["team_1_players"] == "Giyuu|Maged"
@@ -225,21 +231,28 @@ def test_assemble_game_row_builds_expected_flat_row():
 def test_scrape_region_teams_filters_tags_region_and_adds_team_id(monkeypatch):
     html = (FIXTURES / "teams_list.html").read_text(encoding="utf-8")
     monkeypatch.setattr(lol_scrape_lib, "fetch_html", lambda url, session, **kw: html)
-    df = lol_scrape_lib.scrape_region_teams("LCK", "S16", "Summer", session=MagicMock())
+    df = lol_scrape_lib.scrape_region_teams("LCK", "S16", "Summer", "LCK 2026 Rounds 3-4", session=MagicMock())
     assert len(df) > 0
     # Region column stays in gol.gg's native code (see filter_to_target_regions, Task 4),
     # not translated back to the project's league name.
     assert set(df["Region"].unique()) <= {lol_scrape_lib.GOLGG_REGION_CODES["LCK"]}
     assert "team_id" in df.columns
     assert df["team_id"].notna().all()
+    assert set(df["region"].unique()) == {"LCK"}
+    assert set(df["season"].unique()) == {"S16"}
+    assert set(df["split"].unique()) == {"Summer"}
+    assert set(df["tournament"].unique()) == {"LCK 2026 Rounds 3-4"}
 
 
 def test_scrape_global_list_returns_unfiltered_table(monkeypatch):
     html = (FIXTURES / "champion_list.html").read_text(encoding="utf-8")
     monkeypatch.setattr(lol_scrape_lib, "fetch_html", lambda url, session, **kw: html)
-    df = lol_scrape_lib.scrape_global_list("champion", "S16", "Summer", session=MagicMock())
+    df = lol_scrape_lib.scrape_global_list("champion", "GLOBAL", "S16", "Summer", session=MagicMock())
     assert len(df) > 0
     assert "Champion" in df.columns
+    assert set(df["region"].unique()) == {"GLOBAL"}
+    assert set(df["season"].unique()) == {"S16"}
+    assert set(df["split"].unique()) == {"Summer"}
 
 
 def test_scrape_region_games_skips_already_fetched_and_calls_on_row(monkeypatch):
@@ -259,6 +272,7 @@ def test_scrape_region_games_skips_already_fetched_and_calls_on_row(monkeypatch)
         region="LCK",
         season="S16",
         split="Summer",
+        tournament="LCK 2026 Rounds 3-4",
         teams_df=teams_df,
         session=MagicMock(),
         already_fetched_ids={"79871"},
@@ -270,4 +284,5 @@ def test_scrape_region_games_skips_already_fetched_and_calls_on_row(monkeypatch)
     assert "79871" not in fetched_ids
     assert "80757" in fetched_ids
     assert failures == []
+    assert all(row["tournament"] == "LCK 2026 Rounds 3-4" for row in seen_rows)
 
