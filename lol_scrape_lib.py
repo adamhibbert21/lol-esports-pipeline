@@ -354,6 +354,19 @@ def assemble_game_row(
     }
 
 
+# Single source of truth for games.csv's schema: must exactly match the keys
+# assemble_game_row returns. Used by lol_scrape.ipynb to detect a stale
+# prior-schema games.csv before carrying its rows forward (see Task 9 review
+# finding on silent schema-mismatched carry-forward corruption).
+GAMES_ROW_COLUMNS = [
+    "game_id", "region", "season", "split", "tournament", "date", "patch",
+    "duration_seconds", "team_1", "team_2", "winner", "team_1_side",
+    "team_2_side", "team_1_bans", "team_2_bans", "team_1_picks",
+    "team_2_picks", "team_1_players", "team_2_players", "team_1_kda",
+    "team_2_kda", "team_1_cs", "team_2_cs",
+]
+
+
 def scrape_region_teams(
     region: str, season: str, split: str, tournament: str, session: requests.Session
 ) -> pd.DataFrame:

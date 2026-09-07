@@ -255,6 +255,33 @@ def test_scrape_global_list_returns_unfiltered_table(monkeypatch):
     assert set(df["split"].unique()) == {"Summer"}
 
 
+def test_games_row_columns_matches_assemble_game_row_keys():
+    meta = {"date": "2026-08-05", "patch": "16.15", "duration_seconds": 1305}
+    draft = {
+        "team_1": "ANB",
+        "team_2": "Disruptors",
+        "winner": "team_1",
+        "team_1_side": "Blue",
+        "team_2_side": "Red",
+        "team_1_bans": ["Nocturne", "Jayce", "Anivia"],
+        "team_2_bans": ["Cassiopeia", "Camille", "Syndra"],
+        "team_1_picks": ["Ryze", "Rumble", "Xin Zhao", "Sivir", "Lulu"],
+        "team_2_picks": ["Aatrox", "Viktor", "Rell", "K'Sante", "Ahri"],
+    }
+    box_score = [
+        {"team": 1, "player": "Giyuu", "champion": "Ryze", "kda": "5/1/13", "cs": 222},
+        {"team": 2, "player": "owlonsky", "champion": "Aatrox", "kda": "0/5/1", "cs": 155},
+    ]
+    row = lol_scrape_lib.assemble_game_row("80757", "LCK", "S16", "Summer", "LCK 2026 Rounds 3-4", meta, draft, box_score)
+    assert set(row.keys()) == set(lol_scrape_lib.GAMES_ROW_COLUMNS)
+
+
+def test_require_columns_raises_on_missing_column():
+    df = pd.DataFrame({"a": [1]})
+    with pytest.raises(ValueError):
+        lol_scrape_lib._require_columns(df, ["a", "b"], "test context")
+
+
 def test_scrape_region_games_skips_already_fetched_and_calls_on_row(monkeypatch):
     matchlist_html = (FIXTURES / "team_matchlist.html").read_text(encoding="utf-8")
     game_html = (FIXTURES / "game_stats.html").read_text(encoding="utf-8")
